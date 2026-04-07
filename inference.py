@@ -1,169 +1,181 @@
+#!/usr/bin/env python3
 """
-Inference Script — DepUpgradeEnv
-==================================
-MANDATORY env vars:
-  API_BASE_URL  — The API endpoint for the LLM
-  MODEL_NAME    — The model identifier
-  HF_TOKEN      — Your Hugging Face / API key
+Baseline inference script for the Closed-Loop Life Support OpenEnv environment.
+Compliant with Hackathon Pre-Submission Checklist.
 """
-
-import os
 import json
-import textwrap
-from typing import List
+import os
+import sys
+import time
+import requests
+from typing import Dict, Any, List
 
 from openai import OpenAI
-from dep_upgrade_env import DepUpgradeEnv, Action
 
+# Required Environment Variables
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-MAX_STEPS    = 20
-TEMPERATURE  = 0.2
-MAX_TOKENS   = 400
-FALLBACK_ACTION = '{"action_type": "validate"}'
-DEBUG = True
+HOST = os.getenv("HOST", "http://localhost:7860") # Your space URL
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-SYSTEM_PROMPT = textwrap.dedent("""
-    You are a dependency upgrade agent. You manage a Python project's requirements.txt.
-    At each step reply with EXACTLY one JSON action and nothing else.
+SYSTEM_PROMPT = """You are an AI agent controlling a space habitat life support system.
+You receive sensor readings and must output control actions to keep the crew alive.
 
-    Available actions:
-      {"action_type": "upgrade",   "package": "<name>", "version": "<target>"}
-      {"action_type": "pin",       "package": "<name>", "version": "<version>"}
-      {"action_type": "remove",    "package": "<name>"}
-      {"action_type": "run_tests"}
-      {"action_type": "validate"}
-      {"action_type": "skip"}
+CRITICAL THRESHOLDS:
+- O2 must stay between 19.5% and 23.5% (below 19.5% = crew suffocates)
+- CO2 must stay below 1000 ppm (above 3000 = incapacitation)
+- Water must stay above 5 liters
+- Food must stay above 0 kg
+- Crew health is your primary objective (keep above 0.8)
 
-    Strategy:
-    - Fix CVEs first, especially critical ones.
-    - Resolve conflicts before upgrading conflicting packages.
-    - Never upgrade locked packages.
-    - Run tests after major upgrades to verify.
-    - Output only valid JSON. No explanations.
-""").strip()
+ACTIONS (all floats in given ranges):
+- increase_plant_growth [0-1]: Boost photosynthesis (produces O2, consumes CO2 and water, grows food)
+- recycle_water [0-1]: Water reclamation intensity (recovers crew/plant waste water)
+- adjust_oxygen [-1 to +1]: Positive = release stored O2; Negative = activate CO2 scrubber
+- ration_food [0-1]: 1.0 = full rations; 0.3 = emergency rations (extends food supply)
+- crew_activity [0-1]: Lower activity reduces O2/food consumption but hurts morale
+
+STRATEGY:
+- If O2 is low: increase_plant_growth AND adjust_oxygen positive
+- If CO2 is high: increase_plant_growth AND adjust_oxygen negative
+- If water is low: recycle_water high, reduce plant growth temporarily
+- If food is low: ration_food down, grow plants for future harvest
+
+Respond ONLY with a valid JSON object. No explanation, no markdown:
+{"increase_plant_growth": 0.7, "recycle_water": 0.6, "adjust_oxygen": 0.1, "ration_food": 1.0, "crew_activity": 0.8}"""
 
 
-def build_history(history: List[str]) -> str:
-    return "\n".join(history[-5:]) if history else "None"
+def call_env(host: str, endpoint: str, method: str = "POST", data: Dict = None) -> Dict:
+    url = f"{host}{endpoint}"
+    if method == "GET":
+        resp = requests.get(url, timeout=30)
+    else:
+        resp = requests.post(url, json=data, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
 
-def build_prompt(step: int, obs, history: List[str]) -> str:
-    pkgs = [
-        f"  {p.name} {p.current_version} → {p.latest_version}"
-        f"{' [CVE:'+p.cve_severity+']' if p.has_cve else ''}"
-        f"{' [OUTDATED]' if p.is_outdated else ''}"
-        f"{' [CONFLICT: '+p.conflict_reason+']' if p.is_conflicting else ''}"
-        f"{' [LOCKED]' if p.locked else ''}"
-        for p in obs.packages
-    ]
-    tests = [f"  {k}: {'PASS' if v else 'FAIL'}" for k, v in obs.test_results.items()]
+def run_episode(host: str, client: OpenAI, model: str, task_id: str, seed: int) -> Dict[str, Any]:
+    print("[START]")
+    print(f"Task: {task_id} | Model: {model} | Seed: {seed}")
 
-    return textwrap.dedent(f"""
-        Step: {step}  |  Task: {obs.task_id}  |  Score: {obs.score_so_far:.2f}
+    reset_resp = call_env(host, "/reset", data={"task_id": task_id, "seed": seed})
+    session_id = reset_resp["session_id"]
+    max_steps = reset_resp["info"]["max_steps"]
+    obs = reset_resp["observation"]
+
+    step_count = 0
+    total_reward = 0.0
+    conversation: List[Dict] = []
+
+    while step_count < max_steps:
+        print("[STEP]")
         
-        Packages:
-        {chr(10).join(pkgs)}
-        
-        Tests:
-        {chr(10).join(tests)}
-        
-        Issues remaining: {obs.issues_remaining}
-        
-        History:
-        {build_history(history)}
-        
-        Reply with exactly one JSON action.
-    """).strip()
-
-
-def parse_action(text: str) -> Action:
-    text = text.strip()
-    if "```" in text:
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    try:
-        return Action(**json.loads(text))
-    except Exception:
-        if DEBUG:
-            print(f"  [parse error] {text!r}")
-        return Action(**json.loads(FALLBACK_ACTION))
-
-
-def run_task(task_id: str) -> float:
-    env = DepUpgradeEnv(task_id=task_id)
-    obs = env.reset()
-    history: List[str] = []
-    final_score = 0.0
-
-    print("START")
-    print(f"Task: {task_id.upper()}")
-    print(f"Issues: {obs.issues_remaining}")
-
-    for step in range(1, MAX_STEPS + 1):
-        print(f"STEP {step}")
-        prompt = build_prompt(step, obs, history)
-
-        try:
-            completion = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS,
-                stream=False,
-            )
-            response_text = completion.choices[0].message.content or ""
-        except Exception as exc:
-            print(f"  Model error: {exc}. Using fallback.")
-            response_text = FALLBACK_ACTION
-
-        action = parse_action(response_text)
-        if DEBUG:
-            print(f"  Step {step}: {action.model_dump(exclude_none=True)}")
-
-        obs, reward, done, info = env.step(action)
-        final_score = reward.score
-
-        history.append(
-            f"Step {step}: {action.action_type}"
-            f"({action.package or ''}) → score {reward.score:.2f}"
+        # Build user message with current observation
+        obs_text = (
+            f"Step {step_count + 1}/{max_steps}\n"
+            f"O2: {obs['o2_percent']:.2f}% | CO2: {obs['co2_ppm']:.0f}ppm | "
+            f"Water: {obs['water_liters']:.1f}L | Food: {obs['food_kg']:.2f}kg\n"
+            f"Crew health: {obs['crew_health']:.3f} | Crew size: {obs['crew_size']}\n"
+            f"Plant growth rate: {obs['plant_growth_rate']:.2f} | "
+            f"Water recycling: {obs['water_recycling_rate']:.2f}\n"
+            f"Power budget: {obs['power_budget']:.2f} | Day: {obs['day']}"
         )
 
-        print(f"  Reward: {reward.score:.4f} | Done: {done} | {reward.breakdown}")
+        conversation.append({"role": "user", "content": obs_text})
+
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + conversation[-6:],
+                temperature=0.3,
+                max_tokens=100,
+            )
+            action_text = response.choices[0].message.content.strip()
+            conversation.append({"role": "assistant", "content": action_text})
+
+            # Parse action
+            action_data = json.loads(action_text)
+            action = {
+                "increase_plant_growth": float(action_data.get("increase_plant_growth", 0.5)),
+                "recycle_water": float(action_data.get("recycle_water", 0.5)),
+                "adjust_oxygen": float(action_data.get("adjust_oxygen", 0.0)),
+                "ration_food": float(action_data.get("ration_food", 1.0)),
+                "crew_activity": float(action_data.get("crew_activity", 0.7)),
+            }
+        except Exception as e:
+            print(f"  ⚠ LLM/Action parse error at step {step_count}: {e}. Using defaults.")
+            action = {
+                "increase_plant_growth": 0.6,
+                "recycle_water": 0.6,
+                "adjust_oxygen": 0.0,
+                "ration_food": 0.9,
+                "crew_activity": 0.7,
+            }
+
+        # Step environment
+        step_resp = call_env(host, "/step", data={"session_id": session_id, "action": action})
+        obs = step_resp["observation"]
+        reward = step_resp["reward"]
+        done = step_resp["done"]
+        total_reward += reward
+        step_count += 1
 
         if done:
-            print(f"  Episode complete at step {step}.")
+            if step_resp["info"].get("failure_reason"):
+                print(f"  ✗ FAILED: {step_resp['info']['failure_reason']}")
+            else:
+                print(f"  ✓ Episode complete")
             break
-    else:
-        print(f"  Reached max steps ({MAX_STEPS}).")
 
-    print(f"  Final [{task_id}]: {final_score:.4f}")
-    print("END")
-    return final_score
+    # Grade the episode
+    grade_resp = call_env(host, "/grade", data={"session_id": session_id, "task_id": task_id})
+    print(f"  Score: {grade_resp['score']:.4f} | Passed: {grade_resp['passed']}")
+    print("[END]")
+
+    return {
+        "task_id": task_id,
+        "score": grade_resp["score"],
+        "passed": grade_resp["passed"],
+        "steps": step_count,
+        "total_reward": round(total_reward, 4),
+        "breakdown": grade_resp["breakdown"],
+        "feedback": grade_resp["feedback"],
+    }
 
 
 def main():
-    scores = {}
-    for task_id in ["easy", "medium", "hard"]:
-        scores[task_id] = run_task(task_id)
+    seed = 42
+    tasks = ["task_easy", "task_medium", "task_hard"]
 
-    print(f"\n{'='*55}")
-    print("BASELINE SCORES")
-    print("="*55)
-    for t, s in scores.items():
-        print(f"  {t:<8}: {s:.4f}")
-    avg = sum(scores.values()) / len(scores)
-    print(f"  {'average':<8}: {avg:.4f}")
+    try:
+        health = requests.get(f"{HOST}/health", timeout=5)
+        health.raise_for_status()
+    except Exception as e:
+        print(f"✗ Server not reachable at {HOST}: {e}")
+        sys.exit(1)
 
+    results = []
+    for task_id in tasks:
+        result = run_episode(HOST, client, MODEL_NAME, task_id, seed)
+        results.append(result)
+        time.sleep(1)
+
+    avg_score = sum(r["score"] for r in results) / len(results)
+
+    output = {
+        "model": MODEL_NAME,
+        "seed": seed,
+        "host": HOST,
+        "results": results,
+        "average_score": round(avg_score, 4),
+    }
+    with open("baseline_results.json", "w") as f:
+        json.dump(output, f, indent=2)
 
 if __name__ == "__main__":
     main()
