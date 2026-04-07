@@ -16,15 +16,17 @@ from openai import OpenAI
 from dep_upgrade_env import DepUpgradeEnv, Action
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-MODEL_NAME   = os.getenv("MODEL_NAME")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
 MAX_STEPS    = 20
 TEMPERATURE  = 0.2
 MAX_TOKENS   = 400
 FALLBACK_ACTION = '{"action_type": "validate"}'
 DEBUG = True
 
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 SYSTEM_PROMPT = textwrap.dedent("""
     You are a dependency upgrade agent. You manage a Python project's requirements.txt.
@@ -100,12 +102,12 @@ def run_task(task_id: str) -> float:
     history: List[str] = []
     final_score = 0.0
 
-    print(f"\n{'='*55}")
+    print("START")
     print(f"Task: {task_id.upper()}")
-    print(f"{'='*55}")
     print(f"Issues: {obs.issues_remaining}")
 
     for step in range(1, MAX_STEPS + 1):
+        print(f"STEP {step}")
         prompt = build_prompt(step, obs, history)
 
         try:
@@ -145,6 +147,7 @@ def run_task(task_id: str) -> float:
         print(f"  Reached max steps ({MAX_STEPS}).")
 
     print(f"  Final [{task_id}]: {final_score:.4f}")
+    print("END")
     return final_score
 
 
