@@ -1,0 +1,83 @@
+name: DepUpgradeEnv
+version: "1.0.0"
+description: >
+  An OpenEnv-compliant RL environment where an AI agent upgrades
+  outdated, vulnerable, and conflicting Python package dependencies.
+  Simulates the real-world task of dependency management that every
+  software engineering team deals with continuously.
+tags:
+  - openenv
+  - dependency-management
+  - security
+  - devops
+  - real-world
+
+tasks:
+  - id: easy
+    description: "Fix 2 CVEs and 1 outdated package. No conflicts. Safe to upgrade in any order."
+    difficulty: easy
+    max_steps: 25
+    score_range: [0.0, 1.0]
+
+  - id: medium
+    description: "Fix 2 CVEs + version conflicts. Upgrading in wrong order breaks tests."
+    difficulty: medium
+    max_steps: 25
+    score_range: [0.0, 1.0]
+
+  - id: hard
+    description: >
+      Fix 2 CVEs + diamond dependency conflict + locked package + breaking API change.
+      Requires understanding transitive dependencies and careful sequencing.
+    difficulty: hard
+    max_steps: 25
+    score_range: [0.0, 1.0]
+
+observation_space:
+  type: object
+  fields:
+    task_id: string
+    step: integer
+    packages:
+      type: list
+      items:
+        name: string
+        current_version: string
+        latest_version: string
+        has_cve: boolean
+        cve_severity: "string | null"
+        is_outdated: boolean
+        is_conflicting: boolean
+        conflict_reason: "string | null"
+        locked: boolean
+    test_results: "dict[string, boolean]"
+    issues_remaining: "list[string]"
+    score_so_far: float
+    message: string
+
+action_space:
+  type: object
+  fields:
+    action_type:
+      type: string
+      enum: [upgrade, pin, remove, run_tests, validate, skip]
+    package:
+      type: string
+      required: false
+    version:
+      type: string
+      required: false
+
+reward:
+  type: float
+  range: [0.0, 1.0]
+  signal: dense
+  description: >
+    Partial-progress reward at every step. Each resolved issue (CVE fixed,
+    conflict resolved, test passing) contributes independently to the score.
+    Rewards correct sequencing. Does not penalize wrong actions — agent learns
+    from the score not improving rather than from punishment.
+
+entry_point: "env:DepUpgradeEnv"
+dockerfile: "Dockerfile"
+inference_script: "inference.py"
