@@ -13,7 +13,7 @@ try:
 except ImportError:
     HAS_REQUESTS = False
 
-from env import DepUpgradeEnv, Action, Observation, Reward
+from dep_upgrade_env import DepUpgradeEnv, Action, Observation, Reward
 
 TASKS = ["easy", "medium", "hard"]
 results = []

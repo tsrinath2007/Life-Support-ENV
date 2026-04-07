@@ -29,7 +29,7 @@ Correct strategy:
 7. run_tests
 """
 
-from env import Package
+from dep_upgrade_env import Package
 
 
 class HardTask:

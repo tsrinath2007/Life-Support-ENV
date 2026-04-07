@@ -11,7 +11,7 @@ Agent needs to:
 4. run_tests to confirm
 """
 
-from env import Package
+from dep_upgrade_env import Package
 
 
 class EasyTask:

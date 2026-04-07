@@ -14,7 +14,7 @@ Specifically:
 Correct order: upgrade scipy → upgrade pandas → upgrade numpy → run_tests
 """
 
-from env import Package
+from dep_upgrade_env import Package
 
 
 class MediumTask:
