@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """
-Baseline inference script for the Closed-Loop Life Support OpenEnv environment.
-Compliant with Hackathon Pre-Submission Checklist.
+Inference Script — Closed-Loop Life Support OpenEnv
+===================================================
+MANDATORY:
+- Before submitting, ensure the following variables are defined:
+    API_BASE_URL   The API endpoint for the LLM.
+    MODEL_NAME     The model identifier to use for inference.
+    HF_TOKEN       Your Hugging Face / API key.
 """
-import json
+
 import os
-import sys
-import time
+import json
+import textwrap
 import requests
-from typing import Dict, Any, List
+import time
+from typing import List, Optional, Dict, Any
 
 from openai import OpenAI
 
@@ -18,39 +24,41 @@ MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-HOST = os.getenv("HOST", "http://localhost:7860") # Your space URL
+# Environment Endpoint (Hugging Face Space URL or localhost)
+HOST = os.getenv("HOST", "http://localhost:7860")
+
+BENCHMARK = "closed-loop-life-support"
+MAX_STEPS = 20  # Baseline limit
+TEMPERATURE = 0.2
+MAX_TOKENS = 150
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-SYSTEM_PROMPT = """You are an AI agent controlling a space habitat life support system.
-You receive sensor readings and must output control actions to keep the crew alive.
+SYSTEM_PROMPT = textwrap.dedent("""
+    You are an AI agent controlling a space habitat life support system.
+    You receive sensor readings and must output control actions to keep the crew alive.
 
-CRITICAL THRESHOLDS:
-- O2 must stay between 19.5% and 23.5% (below 19.5% = crew suffocates)
-- CO2 must stay below 1000 ppm (above 3000 = incapacitation)
-- Water must stay above 5 liters
-- Food must stay above 0 kg
-- Crew health is your primary objective (keep above 0.8)
+    CRITICAL THRESHOLDS:
+    - O2 must stay between 19.5% and 23.5%
+    - CO2 must stay below 1000 ppm
+    - Water must stay above 5 liters
+    - Food must stay above 0 kg
+    - Crew health is your primary objective (keep above 0.8)
 
-ACTIONS (all floats in given ranges):
-- increase_plant_growth [0-1]: Boost photosynthesis (produces O2, consumes CO2 and water, grows food)
-- recycle_water [0-1]: Water reclamation intensity (recovers crew/plant waste water)
-- adjust_oxygen [-1 to +1]: Positive = release stored O2; Negative = activate CO2 scrubber
-- ration_food [0-1]: 1.0 = full rations; 0.3 = emergency rations (extends food supply)
-- crew_activity [0-1]: Lower activity reduces O2/food consumption but hurts morale
+    ACTIONS (all floats in given ranges):
+    - increase_plant_growth [0-1]
+    - recycle_water [0-1]
+    - adjust_oxygen [-1 to +1]
+    - ration_food [0-1]
+    - crew_activity [0-1]
 
-STRATEGY:
-- If O2 is low: increase_plant_growth AND adjust_oxygen positive
-- If CO2 is high: increase_plant_growth AND adjust_oxygen negative
-- If water is low: recycle_water high, reduce plant growth temporarily
-- If food is low: ration_food down, grow plants for future harvest
-
-Respond ONLY with a valid JSON object. No explanation, no markdown:
-{"increase_plant_growth": 0.7, "recycle_water": 0.6, "adjust_oxygen": 0.1, "ration_food": 1.0, "crew_activity": 0.8}"""
+    Respond ONLY with a valid JSON object. No explanation:
+    {"increase_plant_growth": 0.7, "recycle_water": 0.6, "adjust_oxygen": 0.1, "ration_food": 1.0, "crew_activity": 0.8}
+""").strip()
 
 
-def call_env(host: str, endpoint: str, method: str = "POST", data: Dict = None) -> Dict:
-    url = f"{host}{endpoint}"
+def call_env(endpoint: str, method: str = "POST", data: Dict = None) -> Dict:
+    url = f"{HOST}{endpoint}"
     if method == "GET":
         resp = requests.get(url, timeout=30)
     else:
@@ -59,123 +67,88 @@ def call_env(host: str, endpoint: str, method: str = "POST", data: Dict = None) 
     return resp.json()
 
 
-def run_episode(host: str, client: OpenAI, model: str, task_id: str, seed: int) -> Dict[str, Any]:
-    print("[START]")
-    print(f"Task: {task_id} | Model: {model} | Seed: {seed}")
+def run_episode(task_name: str, seed: int = 42) -> float:
+    print(f"[START] task={task_name} env={BENCHMARK} model={MODEL_NAME}", flush=True)
 
-    reset_resp = call_env(host, "/reset", data={"task_id": task_id, "seed": seed})
-    session_id = reset_resp["session_id"]
-    max_steps = reset_resp["info"]["max_steps"]
-    obs = reset_resp["observation"]
+    rewards = []
+    success = False
+    score = 0.0
+    steps_taken = 0
 
-    step_count = 0
-    total_reward = 0.0
-    conversation: List[Dict] = []
+    try:
+        # Reset environment
+        reset_resp = call_env("/reset", data={"task_id": task_name, "seed": seed})
+        session_id = reset_resp["session_id"]
+        obs = reset_resp["observation"]
+        done = False
 
-    while step_count < max_steps:
-        print("[STEP]")
-        
-        # Build user message with current observation
-        obs_text = (
-            f"Step {step_count + 1}/{max_steps}\n"
-            f"O2: {obs['o2_percent']:.2f}% | CO2: {obs['co2_ppm']:.0f}ppm | "
-            f"Water: {obs['water_liters']:.1f}L | Food: {obs['food_kg']:.2f}kg\n"
-            f"Crew health: {obs['crew_health']:.3f} | Crew size: {obs['crew_size']}\n"
-            f"Plant growth rate: {obs['plant_growth_rate']:.2f} | "
-            f"Water recycling: {obs['water_recycling_rate']:.2f}\n"
-            f"Power budget: {obs['power_budget']:.2f} | Day: {obs['day']}"
-        )
+        for step in range(1, MAX_STEPS + 1):
+            if done:
+                break
 
-        conversation.append({"role": "user", "content": obs_text})
-
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + conversation[-6:],
-                temperature=0.3,
-                max_tokens=100,
+            # Build observation text for model
+            obs_text = (
+                f"Step {step}/{MAX_STEPS}\n"
+                f"O2: {obs['o2_percent']:.2f}% | CO2: {obs['co2_ppm']:.0f}ppm | "
+                f"Water: {obs['water_liters']:.1f}L | Food: {obs['food_kg']:.2f}kg\n"
+                f"Crew health: {obs['crew_health']:.3f}"
             )
-            action_text = response.choices[0].message.content.strip()
-            conversation.append({"role": "assistant", "content": action_text})
 
-            # Parse action
-            action_data = json.loads(action_text)
-            action = {
-                "increase_plant_growth": float(action_data.get("increase_plant_growth", 0.5)),
-                "recycle_water": float(action_data.get("recycle_water", 0.5)),
-                "adjust_oxygen": float(action_data.get("adjust_oxygen", 0.0)),
-                "ration_food": float(action_data.get("ration_food", 1.0)),
-                "crew_activity": float(action_data.get("crew_activity", 0.7)),
-            }
-        except Exception as e:
-            print(f"  ⚠ LLM/Action parse error at step {step_count}: {e}. Using defaults.")
-            action = {
-                "increase_plant_growth": 0.6,
-                "recycle_water": 0.6,
-                "adjust_oxygen": 0.0,
-                "ration_food": 0.9,
-                "crew_activity": 0.7,
-            }
+            try:
+                completion = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": obs_text},
+                    ],
+                    temperature=TEMPERATURE,
+                    max_tokens=MAX_TOKENS,
+                )
+                action_text = (completion.choices[0].message.content or "").strip()
+                action_data = json.loads(action_text)
+            except Exception as e:
+                action_data = {"increase_plant_growth": 0.5, "recycle_water": 0.5, "adjust_oxygen": 0.0, "ration_food": 0.9, "crew_activity": 0.7}
+                action_text = "default_fallback"
 
-        # Step environment
-        step_resp = call_env(host, "/step", data={"session_id": session_id, "action": action})
-        obs = step_resp["observation"]
-        reward = step_resp["reward"]
-        done = step_resp["done"]
-        total_reward += reward
-        step_count += 1
+            # Step environment
+            step_resp = call_env("/step", data={"session_id": session_id, "action": action_data})
+            obs = step_resp["observation"]
+            reward = step_resp["reward"]
+            done = step_resp["done"]
+            error = step_resp["info"].get("failure_reason", "null")
+            if error is None: error = "null"
 
-        if done:
-            if step_resp["info"].get("failure_reason"):
-                print(f"  ✗ FAILED: {step_resp['info']['failure_reason']}")
-            else:
-                print(f"  ✓ Episode complete")
-            break
+            rewards.append(reward)
+            steps_taken = step
 
-    # Grade the episode
-    grade_resp = call_env(host, "/grade", data={"session_id": session_id, "task_id": task_id})
-    print(f"  Score: {grade_resp['score']:.4f} | Passed: {grade_resp['passed']}")
-    print("[END]")
+            print(f"[STEP] step={step} action={json.dumps(action_data)} reward={reward:.2f} done={str(done).lower()} error={error}", flush=True)
 
-    return {
-        "task_id": task_id,
-        "score": grade_resp["score"],
-        "passed": grade_resp["passed"],
-        "steps": step_count,
-        "total_reward": round(total_reward, 4),
-        "breakdown": grade_resp["breakdown"],
-        "feedback": grade_resp["feedback"],
-    }
+        # Grade completion
+        grade_resp = call_env("/grade", data={"session_id": session_id, "task_id": task_name})
+        score = grade_resp["score"]
+        success = grade_resp["passed"]
+
+    except Exception as e:
+        print(f"[DEBUG] Runtime error: {e}", flush=True)
+    finally:
+        log_rewards = ",".join(f"{r:.2f}" for r in rewards)
+        print(f"[END] success={str(success).lower()} steps={steps_taken} score={score:.3f} rewards={log_rewards}", flush=True)
+
+    return score
 
 
 def main():
-    seed = 42
-    tasks = ["task_easy", "task_medium", "task_hard"]
-
+    # Verify server is up
     try:
-        health = requests.get(f"{HOST}/health", timeout=5)
-        health.raise_for_status()
+        requests.get(f"{HOST}/health", timeout=5).raise_for_status()
     except Exception as e:
         print(f"✗ Server not reachable at {HOST}: {e}")
-        sys.exit(1)
+        return
 
-    results = []
-    for task_id in tasks:
-        result = run_episode(HOST, client, MODEL_NAME, task_id, seed)
-        results.append(result)
+    for task_name in ["task_easy", "task_medium", "task_hard"]:
+        run_episode(task_name)
         time.sleep(1)
 
-    avg_score = sum(r["score"] for r in results) / len(results)
-
-    output = {
-        "model": MODEL_NAME,
-        "seed": seed,
-        "host": HOST,
-        "results": results,
-        "average_score": round(avg_score, 4),
-    }
-    with open("baseline_results.json", "w") as f:
-        json.dump(output, f, indent=2)
 
 if __name__ == "__main__":
     main()

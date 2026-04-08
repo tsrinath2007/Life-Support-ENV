@@ -36,15 +36,17 @@ This environment fills a real gap: **no existing OpenEnv covers closed-loop biol
 
 ```
 life-support-env/
-├── env/
-│   ├── environment.py    # Core simulation (LifeSupportEnv)
-│   └── models.py         # Pydantic models: Observation, Action, Reward, State
-├── tasks/
-│   └── graders.py        # Deterministic graders for easy/medium/hard
-├── tests/
-│   └── test_environment.py  # Full test suite (pytest)
-├── server.py             # FastAPI HTTP server (OpenEnv API)
-├── baseline_inference.py # Baseline agent using OpenAI API
+├── env/                  # Physics simulation package
+├── env.py                # Root entry point for OpenEnv
+├── tasks/                # Task discovery and graders
+│   ├── easy.py           # Single-Day task config
+│   ├── medium.py         # 7-Day task config
+│   ├── hard.py           # 30-Day task config
+│   └── graders.py        # Grader logic
+├── tests/                # Full test suite
+├── server/
+│   └── app.py            # FastAPI HTTP server (OpenEnv API)
+├── inference.py          # Strict baseline agent (OpenAI client)
 ├── openenv.yaml          # OpenEnv metadata spec
 ├── requirements.txt
 ├── Dockerfile
