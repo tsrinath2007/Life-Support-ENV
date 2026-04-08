@@ -19,16 +19,17 @@ from typing import List, Optional, Dict, Any
 from openai import OpenAI
 
 HF_TOKEN = os.getenv("HF_TOKEN")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME") # Optional for Docker
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
+
+# Configuration
 HOST = os.getenv("HOST", "http://127.0.0.1:7860")
 BENCHMARK = "closed-loop-life-support"
-MAX_STEPS = 20
+MAX_STEPS = 1000 # Increased to allow for 720-step hard task
 TEMPERATURE = 0.2
 MAX_TOKENS = 150
 
-# Submission Configuration (OpenAI Client Only)
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 SYSTEM_PROMPT = textwrap.dedent("""
@@ -125,8 +126,8 @@ def run_episode(task_name: str, seed: int = 42) -> float:
         score = grade_resp["score"]
         success = grade_resp["passed"]
 
-    except Exception as e:
-        print(f"[DEBUG] Runtime error: {e}", flush=True)
+    except Exception:
+        pass
     finally:
         log_rewards = ",".join(f"{r:.2f}" for r in rewards)
         print(f"[END] success={str(success).lower()} steps={steps_taken} score={score:.3f} rewards={log_rewards}", flush=True)
