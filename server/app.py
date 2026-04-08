@@ -87,8 +87,10 @@ def health():
     return {"status": "ok", "sessions": len(_sessions), "timestamp": time.time()}
 
 @app.post("/reset", response_model=ResetResponse)
-def reset(req: ResetRequest = ResetRequest()):
+def reset(req: Optional[ResetRequest] = None):
     """Start a new episode. Returns initial observation and a session_id."""
+    if req is None:
+        req = ResetRequest()
     try:
         env = LifeSupportEnv(task_id=req.task_id, seed=req.seed)
     except ValueError as e:
@@ -156,10 +158,10 @@ def state(session_id: str):
     )
 
 @app.post("/grade", response_model=GradeResponse)
-def grade(req: GradeRequest = None):
+def grade(req: Optional[GradeRequest] = None):
     """Grade a completed episode trajectory."""
     if req is None:
-        raise HTTPException(status_code=400, detail="Missing grade request body.")
+        raise HTTPException(status_code=400, detail="Missing session_id in grade request.")
     if req.session_id not in _sessions:
         raise HTTPException(status_code=404, detail="Session not found.")
 
