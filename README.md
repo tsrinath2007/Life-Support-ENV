@@ -1,3 +1,18 @@
+---
+title: Closed-Loop Life Support OpenEnv
+emoji: 🌱
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+tags:
+  - openenv
+  - reinforcement-learning
+  - space
+  - simulation
+  - resource-management
+---
+
 # 🌱 Closed-Loop Life Support — OpenEnv
 
 **Scaler School of Technology Hackathon | Team: BigByte**
@@ -28,20 +43,24 @@ This environment fills a real gap: **no existing OpenEnv covers closed-loop biol
 ## 🏗️ Project Structure
 
 ```
-life-support-env/
-├── env/
-│   ├── environment.py    # Core simulation (LifeSupportEnv)
-│   └── models.py         # Pydantic models: Observation, Action, Reward, State
-├── tasks/
-│   └── graders.py        # Deterministic graders for easy/medium/hard
-├── tests/
-│   └── test_environment.py  # Full test suite (pytest)
-├── server.py             # FastAPI HTTP server (OpenEnv API)
-├── baseline_inference.py # Baseline agent using OpenAI API
-├── openenv.yaml          # OpenEnv metadata spec
-├── requirements.txt
-├── Dockerfile
-└── README.md
+Scaler/
+├── env/                  # Core Physics & Simulation
+│   ├── environment.py    # Main LifeSupportEnv class
+│   └── models.py         # Pydantic Schemas (Observation, Action, State)
+├── server/               # HTTP API Interface
+│   └── app.py            # FastAPI implementation (OpenEnv compliant)
+├── tasks/                # Challenge Configurations
+│   ├── easy.py           # 24-hour stabilization
+│   ├── medium.py         # 7-day resource balance
+│   ├── hard.py           # 30-day closed-loop mission
+│   └── graders.py        # Automated grading logic
+├── tests/                # Validation Suite
+├── env.py                # OpenEnv Root Entry Point
+├── inference.py          # Baseline AI Agent (Submission Version)
+├── openenv.yaml          # OpenEnv Metadata
+├── pyproject.toml        # Build & Dependency Config
+├── Dockerfile            # Multi-mode Deployment
+└── README.md             # This Documentation
 ```
 
 ---
