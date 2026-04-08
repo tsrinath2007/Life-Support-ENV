@@ -206,7 +206,8 @@ def list_tasks():
                 "description": "30-day mission with 8 crew. Maximize health, minimize imports.",
             },
         ]
-    }def main():
+    }
+def main():
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7860)
 

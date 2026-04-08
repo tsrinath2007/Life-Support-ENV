@@ -18,20 +18,17 @@ from typing import List, Optional, Dict, Any
 
 from openai import OpenAI
 
-# Required Environment Variables
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
-
-# Environment Endpoint (Hugging Face Space URL or localhost)
-HOST = os.getenv("HOST", "http://localhost:7860")
-
+HOST = os.getenv("HOST", "http://127.0.0.1:7860")
 BENCHMARK = "closed-loop-life-support"
-MAX_STEPS = 20  # Baseline limit
+MAX_STEPS = 20
 TEMPERATURE = 0.2
 MAX_TOKENS = 150
 
+# Submission Configuration (OpenAI Client Only)
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 SYSTEM_PROMPT = textwrap.dedent("""
