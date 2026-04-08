@@ -12,9 +12,8 @@ jobs:
         with:
           fetch-depth: 0
       - name: Push to Hub
-        uses: huggingface/github-sync-action@v2
-        with:
-          github_repo: tsrinath2007/Life-Support-ENV
-          huggingface_repo: tsrinath/Life-Support-ENV
-          hf_token: ${{ secrets.HF_TOKEN }}
-          repo_type: space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push --force https://tsrinath:$HF_TOKEN@huggingface.co/spaces/tsrinath/Life-Support-ENV main
+          git push --force https://tsrinath:$HF_TOKEN@huggingface.co/spaces/tsrinath/Life-Support-ENV main:master
